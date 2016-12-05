@@ -7,16 +7,15 @@
 
 (defn setup-embedded-zk [f]
   (let [server (TestingServer. 2182)]
-    (do (f)
-        (.close server))))
+    (f)
+    (.close server)))
 
 (defn clear-embedded-zk [f]
   (let [c (zk/connect "127.0.0.1:2182")]
-    (do
-      (doseq [child (remove #{"zookeeper"} (zk/children c "/"))]
-        (zk/delete-all c (str "/" child)))
-      (f)
-      (zk/close c))))
+    (doseq [child (remove #{"zookeeper"} (zk/children c "/"))]
+      (zk/delete-all c (str "/" child)))
+    (f)
+    (zk/close c)))
 
 (use-fixtures :once setup-embedded-zk)
 (use-fixtures :each clear-embedded-zk)

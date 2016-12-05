@@ -98,6 +98,3 @@
                   (watch syncer path true))))]
       (do-sync)
       [source-box destination-box])))
-
-(defn sync-zookeepers [source destinations paths]
-  (mapcat #(sync-zookeeper source % paths) sync-zookeeper))
