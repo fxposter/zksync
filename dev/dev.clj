@@ -3,6 +3,6 @@
   not be included in a production build of the application."
   (:require
     [clojure.tools.namespace.repl :refer [refresh refresh-all]]
-    [zksync.core]))
+    [zksync.core :refer :all]))
 
 (set! *warn-on-reflection* true)

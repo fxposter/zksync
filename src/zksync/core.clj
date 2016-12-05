@@ -53,35 +53,35 @@
 
 (declare watch)
 
-(defn children-watcher [c]
+(defn children-watcher [s]
   (fn [e]
     (when (= :NodeChildrenChanged (:event-type e))
-      (let [fetched-children (children c (:path e) [:watcher (children-watcher c)])]
+      (let [fetched-children (children s (:path e) [:watcher (children-watcher s)])]
         (doseq [child fetched-children]
-          (watch c (str (if (= "/" (:path e)) "" (:path e)) "/" child)))))))
+          (watch s (str (if (= "/" (:path e)) "" (:path e)) "/" child)))))))
 
-(defn data-watcher [c]
+(defn data-watcher [s]
   (fn [e]
     (when (= :NodeDataChanged (:event-type e))
-      (data c (:path e) [:watcher (data-watcher c)]))))
+      (data s (:path e) [:watcher (data-watcher s)]))))
 
-(defn exists-watcher [c]
+(defn exists-watcher [s]
   (fn [e]
     (when (#{:NodeCreated :NodeDeleted} (:event-type e))
-      (exists c (:path e) [:watcher (exists-watcher c)])
+      (exists s (:path e) [:watcher (exists-watcher s)])
       (when (= :NodeCreated (:event-type e))
-        (children c (:path e) [:watcher (children-watcher c)])
-        (data c (:path e) [:watcher (data-watcher c)])))))
+        (children s (:path e) [:watcher (children-watcher s)])
+        (data s (:path e) [:watcher (data-watcher s)])))))
 
 (defn watch
-  ([r path]
-   (watch r path false))
-  ([r path root]
-    (when (exists r path (if root [:watcher (exists-watcher r)] []))
-      (when-let [children (children r path [:watcher (children-watcher r)])]
-        (doseq [child children]
-          (watch r (str (if (= "/" path) "" path) "/" child))))
-      (data r path [:watcher (data-watcher r)]))))
+  ([s path]
+   (watch s path false))
+  ([s path root]
+   (when (exists s path (if root [:watcher (exists-watcher s)] []))
+     (when-let [children (children s path [:watcher (children-watcher s)])]
+       (doseq [child children]
+         (watch s (str (if (= "/" path) "" path) "/" child))))
+     (data s path [:watcher (data-watcher s)]))))
 
 (defn sync-zookeepers [source destinations paths]
   (let [source-conn (zk/connect source)
