@@ -13,7 +13,6 @@
 (defrecord ZooKeeperWriter [client]
   ZooKeeperWriterProtocol
   (ensure-exists [_ path]
-    (println "ensure-exists" path)
     (zk/create-all client path :persistent? true))
   (ensure-not-exists [_ path]
     (zk/delete-all client path))
