@@ -112,6 +112,6 @@
     (zk/create c "/writer" :persistent? true)
     (zk/create c "/root" :data (zd/to-bytes "hello") :persistent? true)
     (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
-      (is (running? syncer))
+      (is (eventually (running? syncer)))
       (stop syncer)
       (is (not (running? syncer))))))

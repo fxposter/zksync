@@ -4,6 +4,11 @@
             [clojure.set :as set])
   (:import (org.apache.zookeeper ZooKeeper)))
 
+(defn- fix-children [children]
+  (if (false? children)
+    nil
+    children))
+
 (defprotocol ZooKeeperWriterProtocol
   (ensure-exists [_ path])
   (ensure-not-exists [_ path])
@@ -19,7 +24,7 @@
   (ensure-data [_ path data]
     (zk/set-data client path data -1))
   (ensure-children [_ path children]
-    (let [existing-children (zk/children client path)
+    (let [existing-children (fix-children (zk/children client path))
           children-to-create (set/difference (set children) (set existing-children))
           children-to-delete (set/difference (set existing-children) (set children))]
       (doseq [child children-to-create]
@@ -41,7 +46,7 @@
         (ensure-not-exists writer path))
       exists))
   (children [_ path args]
-    (let [children (apply zk/children c path args)]
+    (let [children (fix-children (apply zk/children c path args))]
       (ensure-children writer path children)
       children))
   (data [_ path args]
@@ -92,12 +97,13 @@
                 (if-let [destination-conn @destination-box] (zk/close destination-conn))
                 (do-sync)))
             (do-sync []
-              (let [source-conn (vreset! source-box (ZooKeeper. source 5000 (zi/make-watcher watcher)))
+              (let [source-conn (vreset! source-box (ZooKeeper. source 5000 (zi/make-watcher watcher) true))
                     destination-conn (vreset! destination-box (ZooKeeper. destination 5000 (zi/make-watcher watcher)))
                     writer (ZooKeeperWriter. destination-conn)
                     syncer (ZooKeeperSyncer. source-conn writer)]
-                (doseq [path paths]
-                  (watch syncer path true))))]
+                (future
+                  (doseq [path paths]
+                    (watch syncer path true)))))]
       (do-sync)
       [source-box destination-box])))
 
