@@ -2,12 +2,10 @@
   (:require [zookeeper :as zk]
             [zookeeper.internal :as zi]
             [clojure.set :as set])
-  (:import (org.apache.zookeeper ZooKeeper)))
+  (:import [org.apache.zookeeper ZooKeeper]))
 
 (defn- fix-children [children]
-  (if (false? children)
-    nil
-    children))
+  (or children nil))
 
 (defprotocol ZooKeeperWriterProtocol
   (ensure-exists [_ path])
@@ -56,19 +54,19 @@
 
 (declare watch)
 
-(defn children-watcher [s]
+(defn- children-watcher [s]
   (fn [e]
     (when (= :NodeChildrenChanged (:event-type e))
       (let [fetched-children (children s (:path e) [:watcher (children-watcher s)])]
         (doseq [child fetched-children]
           (watch s (str (if (= "/" (:path e)) "" (:path e)) "/" child)))))))
 
-(defn data-watcher [s]
+(defn- data-watcher [s]
   (fn [e]
     (when (= :NodeDataChanged (:event-type e))
       (data s (:path e) [:watcher (data-watcher s)]))))
 
-(defn exists-watcher [s]
+(defn- exists-watcher [s]
   (fn [e]
     (when (#{:NodeCreated :NodeDeleted} (:event-type e))
       (exists s (:path e) [:watcher (exists-watcher s)])
@@ -78,7 +76,7 @@
             (watch s (str (if (= "/" (:path e)) "" (:path e)) "/" child))))
         (data s (:path e) [:watcher (data-watcher s)])))))
 
-(defn watch
+(defn- watch
   ([s path]
    (watch s path false))
   ([s path root]
