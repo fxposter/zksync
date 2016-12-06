@@ -43,75 +43,82 @@
                    (do (Thread/sleep 50) (recur (+ 50 time-elapsed#)))
                    [false values#]))))]
        (if success?#
-         (do-report {:type :pass
-                     :message "Predicate passed"
+         (do-report {:type     :pass
+                     :message  "Predicate passed"
                      :expected '~form
-                     :actual (cons ~pred last-values#)})
-         (do-report {:type :fail
-                     :message "Predicate failed after trying multiple times within 1000 ms."
+                     :actual   (cons ~pred last-values#)})
+         (do-report {:type     :fail
+                     :message  "Predicate failed after trying multiple times within 1000 ms."
                      :expected '~form,
-                     :actual (list '~'not (cons '~pred last-values#))})))))
+                     :actual   (list '~'not (cons '~pred last-values#))})))))
 
+(defn- start-sync []
+  (start (connect-string) (str (connect-string) "/writer") ["/root"]))
+
+(defn- run-sync
+  ([f]
+   (run-sync identity f))
+  ([pre f]
+   (let [c (zk/connect (connect-string))]
+     (zk/create c "/writer" :persistent? true)
+     (pre c)
+     (let [syncer (start-sync)]
+       (try
+         (f c)
+         (finally
+           (stop syncer)
+           (zk/close c)))))))
 
 (deftest updating-structure-edge-case
-  (let [c (zk/connect (connect-string))]
-    (zk/create c "/writer" :persistent? true)
-    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
+  (run-sync
+    (fn [c]
       (zk/create-all c "/root/a/b/c/d" :persistent? true)
       (is (eventually (zk/exists c "/root/a/b/c/d")))
       (is (eventually (zk/exists c "/writer/root/a/b/c/d")))
-      (zk/delete-all c "/root/a")
-      (is (eventually (nil? (zk/children c "/writer/root"))))
 
-      (stop syncer))))
+      (zk/delete-all c "/root/a")
+      (is (eventually (nil? (zk/children c "/writer/root")))))))
 
 (deftest creating-initial-structure
-  (let [c (zk/connect (connect-string))]
-    (zk/create c "/writer" :persistent? true)
-    (zk/create-all c "/hello/world" :persistent? true)
-    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/hello/world"])]
-      (is (eventually (zk/exists c "/writer/hello/world")))
-
-      (stop syncer))))
+  (run-sync
+    (fn [c]
+      (zk/create-all c "/root/hello/world" :persistent? true))
+    (fn [c]
+      (is (eventually (zk/exists c "/writer/root/hello/world"))))))
 
 (deftest updating-structure
-  (let [c (zk/connect (connect-string))]
-    (zk/create c "/writer" :persistent? true)
-    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
+  (run-sync
+    (fn [c]
       (zk/create c "/root" :persistent? true)
       (is (eventually (zk/exists c "/writer/root")))
+
       (zk/delete c "/root")
       (is (eventually (not (zk/exists c "/writer/root"))))
+
       (zk/create c "/root" :persistent? true)
       (is (eventually (zk/exists c "/writer/root")))
+
       (zk/create-all c "/root/a/b/c/d" :persistent? true)
       (is (eventually (zk/exists c "/writer/root/a/b/c/d")))
-      (zk/delete-all c "/root/a")
-      (is (eventually (nil? (zk/children c "/writer/root"))))
 
-      (stop syncer))))
+      (zk/delete-all c "/root/a")
+      (is (eventually (nil? (zk/children c "/writer/root")))))))
 
 (deftest updating-data
-  (let [c (zk/connect (connect-string))]
-    (zk/create c "/writer" :persistent? true)
-    (zk/create c "/root" :data (zd/to-bytes "hello") :persistent? true)
-    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
+  (run-sync
+    (fn [c]
+      (zk/create c "/root" :data (zd/to-bytes "hello") :persistent? true))
+    (fn [c]
       (is (eventually (zk/exists c "/writer/root")))
       (is (= "hello" (zd/to-string (:data (zk/data c "/writer/root")))))
 
       (zk/create-all c "/root/a/b/c/d" :persistent? true)
       (zk/set-data c "/root/a/b/c/d" (zd/to-bytes "sync faster!") -1)
       (is (eventually (zk/exists c "/writer/root/a/b/c/d")))
-      (is (eventually (= "sync faster!" (zd/to-string (:data (zk/data c "/writer/root/a/b/c/d"))))))
-
-      (stop syncer))))
-
+      (is (eventually (= "sync faster!" (zd/to-string (:data (zk/data c "/writer/root/a/b/c/d")))))))))
 
 (deftest running-test
-  (let [c (zk/connect (connect-string))]
-    (zk/create c "/writer" :persistent? true)
-    (zk/create c "/root" :data (zd/to-bytes "hello") :persistent? true)
-    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
-      (is (eventually (running? syncer)))
-      (stop syncer)
-      (is (not (running? syncer))))))
+  (let [syncer (start-sync)]
+    (is (eventually (running? syncer)))
+    (stop syncer)
+    (is (not (running? syncer)))))
