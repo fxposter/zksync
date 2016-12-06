@@ -81,7 +81,7 @@
          (watch s (str (if (= "/" path) "" path) "/" child))))
      (data s path [:watcher (data-watcher s)]))))
 
-(defn sync-zookeeper [source destination paths]
+(defn start [source destination paths]
   (let [source-box (volatile! nil)
         destination-box (volatile! nil)]
     (letfn [(watcher [e]
@@ -98,3 +98,10 @@
                   (watch syncer path true))))]
       (do-sync)
       [source-box destination-box])))
+
+(defn stop [syncer]
+  (doseq [box syncer]
+    (if-let [conn @box] (zk/close conn))))
+
+(defn running? [syncer]
+  (every? #(= :CONNECTED (if-let [conn @%] (zk/state conn))) syncer))

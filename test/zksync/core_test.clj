@@ -56,15 +56,15 @@
   (let [c (zk/connect (connect-string))]
     (zk/create c "/writer" :persistent? true)
     (zk/create-all c "/hello/world" :persistent? true)
-    (let [[source destination] (sync-zookeeper (connect-string) (str (connect-string) "/writer") ["/hello/world"])]
+    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/hello/world"])]
       (is (eventually (zk/exists c "/writer/hello/world")))
-      (zk/close @source)
-      (zk/close @destination))))
+
+      (stop syncer))))
 
 (deftest updating-structure
   (let [c (zk/connect (connect-string))]
     (zk/create c "/writer" :persistent? true)
-    (let [[source destination] (sync-zookeeper (connect-string) (str (connect-string) "/writer") ["/root"])]
+    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
       (zk/create c "/root" :persistent? true)
       (is (eventually (zk/exists c "/writer/root")))
       (zk/delete c "/root")
@@ -75,14 +75,14 @@
       (is (eventually (zk/exists c "/writer/root/a/b/c/d")))
       (zk/delete-all c "/root/a")
       (is (eventually (nil? (zk/children c "/writer/root"))))
-      (zk/close @source)
-      (zk/close @destination))))
+
+      (stop syncer))))
 
 (deftest updating-data
   (let [c (zk/connect (connect-string))]
     (zk/create c "/writer" :persistent? true)
     (zk/create c "/root" :data (zd/to-bytes "hello") :persistent? true)
-    (let [[source destination] (sync-zookeeper (connect-string) (str (connect-string) "/writer") ["/root"])]
+    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
       (is (eventually (zk/exists c "/writer/root")))
       (is (= "hello" (zd/to-string (:data (zk/data c "/writer/root")))))
 
@@ -91,8 +91,15 @@
       (is (eventually (zk/exists c "/writer/root/a/b/c/d")))
       (is (eventually (= "sync faster!" (zd/to-string (:data (zk/data c "/writer/root/a/b/c/d"))))))
 
-      (zk/close @source)
-      (zk/close @destination))))
+      (stop syncer))))
 
 
+(deftest running-test
+  (let [c (zk/connect (connect-string))]
+    (zk/create c "/writer" :persistent? true)
+    (zk/create c "/root" :data (zd/to-bytes "hello") :persistent? true)
+    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
+      (is (running? syncer))
+      (stop syncer)
+      (is (not (running? syncer))))))
 
