@@ -5,22 +5,26 @@
             [zookeeper.data :as zd])
   (:import [org.apache.curator.test TestingServer]))
 
+(def ^:private zk-server nil)
+
+(defn connect-string [] (str "127.0.0.1:" (.getPort zk-server)))
+
 (defn setup-embedded-zk [f]
-  (let [server (TestingServer. 2182)]
+  (let [server (TestingServer.)]
+    (alter-var-root #'zk-server (constantly server))
     (f)
-    (.close server)))
+    (.close server)
+    (alter-var-root #'zk-server (constantly nil))))
 
 (defn clear-embedded-zk [f]
-  (let [c (zk/connect "127.0.0.1:2182")]
+  (let [c (zk/connect (connect-string))]
     (doseq [child (remove #{"zookeeper"} (zk/children c "/"))]
       (zk/delete-all c (str "/" child)))
-    (f)
-    (zk/close c)))
+    (zk/close c)
+    (f)))
 
 (use-fixtures :once setup-embedded-zk)
 (use-fixtures :each clear-embedded-zk)
-
-(def connect-string "127.0.0.1:2182")
 
 (defmethod assert-expr 'eventually [_ form-with-keyword]
   "Asserts that given predicate is eventually true.
@@ -49,18 +53,18 @@
                      :actual (list '~'not (cons '~pred last-values#))})))))
 
 (deftest creating-initial-structure
-  (let [c (zk/connect connect-string)]
+  (let [c (zk/connect (connect-string))]
     (zk/create c "/writer" :persistent? true)
     (zk/create-all c "/hello/world" :persistent? true)
-    (let [[source destination] (sync-zookeeper connect-string (str connect-string "/writer") ["/hello/world"])]
+    (let [[source destination] (sync-zookeeper (connect-string) (str (connect-string) "/writer") ["/hello/world"])]
       (is (eventually (zk/exists c "/writer/hello/world")))
       (zk/close @source)
       (zk/close @destination))))
 
 (deftest updating-structure
-  (let [c (zk/connect connect-string)]
+  (let [c (zk/connect (connect-string))]
     (zk/create c "/writer" :persistent? true)
-    (let [[source destination] (sync-zookeeper connect-string (str connect-string "/writer") ["/root"])]
+    (let [[source destination] (sync-zookeeper (connect-string) (str (connect-string) "/writer") ["/root"])]
       (zk/create c "/root" :persistent? true)
       (is (eventually (zk/exists c "/writer/root")))
       (zk/delete c "/root")
@@ -75,10 +79,10 @@
       (zk/close @destination))))
 
 (deftest updating-data
-  (let [c (zk/connect connect-string)]
+  (let [c (zk/connect (connect-string))]
     (zk/create c "/writer" :persistent? true)
     (zk/create c "/root" :data (zd/to-bytes "hello") :persistent? true)
-    (let [[source destination] (sync-zookeeper connect-string (str connect-string "/writer") ["/root"])]
+    (let [[source destination] (sync-zookeeper (connect-string) (str (connect-string) "/writer") ["/root"])]
       (is (eventually (zk/exists c "/writer/root")))
       (is (= "hello" (zd/to-string (:data (zk/data c "/writer/root")))))
 
