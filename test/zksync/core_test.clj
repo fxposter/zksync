@@ -52,6 +52,19 @@
                      :expected '~form,
                      :actual (list '~'not (cons '~pred last-values#))})))))
 
+
+(deftest updating-structure-edge-case
+  (let [c (zk/connect (connect-string))]
+    (zk/create c "/writer" :persistent? true)
+    (let [syncer (start (connect-string) (str (connect-string) "/writer") ["/root"])]
+      (zk/create-all c "/root/a/b/c/d" :persistent? true)
+      (is (eventually (zk/exists c "/root/a/b/c/d")))
+      (is (eventually (zk/exists c "/writer/root/a/b/c/d")))
+      (zk/delete-all c "/root/a")
+      (is (eventually (nil? (zk/children c "/writer/root"))))
+
+      (stop syncer))))
+
 (deftest creating-initial-structure
   (let [c (zk/connect (connect-string))]
     (zk/create c "/writer" :persistent? true)
@@ -102,4 +115,3 @@
       (is (running? syncer))
       (stop syncer)
       (is (not (running? syncer))))))
-

@@ -68,7 +68,9 @@
     (when (#{:NodeCreated :NodeDeleted} (:event-type e))
       (exists s (:path e) [:watcher (exists-watcher s)])
       (when (= :NodeCreated (:event-type e))
-        (children s (:path e) [:watcher (children-watcher s)])
+        (let [fetched-children (children s (:path e) [:watcher (children-watcher s)])]
+          (doseq [child fetched-children]
+            (watch s (str (if (= "/" (:path e)) "" (:path e)) "/" child))))
         (data s (:path e) [:watcher (data-watcher s)])))))
 
 (defn watch
