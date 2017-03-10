@@ -2,10 +2,17 @@
   (:require [clojure.test :refer :all]
             [zksync.core :refer :all]
             [zookeeper :as zk]
-            [zookeeper.data :as zd])
-  (:import [org.apache.curator.test TestingServer]))
+            [zookeeper.data :as zd]
+            [zookeeper.internal :as zi]
+            [clojure.set :as set])
+  (:import [org.apache.curator.test TestingServer]
+           (java.util.concurrent LinkedBlockingQueue)
+           (org.apache.curator.framework.recipes.cache TreeCache TreeCacheListener)
+           (org.apache.curator.framework CuratorFrameworkFactory)
+           (org.apache.curator.retry ExponentialBackoffRetry RetryNTimes)
+           (org.apache.zookeeper KeeperException$NodeExistsException)))
 
-(def ^:private zk-server nil)
+(def ^:private ^TestingServer zk-server nil)
 
 (defn connect-string [] (str "127.0.0.1:" (.getPort zk-server)))
 
@@ -53,14 +60,17 @@
                      :actual   (list '~'not (cons '~pred last-values#))})))))
 
 (defn- start-sync []
-  (start (connect-string) (str (connect-string) "/writer") ["/root"]))
+  (let [syncer (create (curator-framework (connect-string) (no-retry))
+                       ["/root"]
+                       [(curator-framework (connect-string) (no-retry) :namespace "writer")])]
+    (start syncer)
+    syncer))
 
 (defn- run-sync
   ([f]
    (run-sync identity f))
   ([pre f]
    (let [c (zk/connect (connect-string))]
-     (zk/create c "/writer" :persistent? true)
      (pre c)
      (let [syncer (start-sync)]
        (try
@@ -113,12 +123,6 @@
       (is (= "hello" (zd/to-string (:data (zk/data c "/writer/root")))))
 
       (zk/create-all c "/root/a/b/c/d" :persistent? true)
-      (zk/set-data c "/root/a/b/c/d" (zd/to-bytes "sync faster!") -1)
       (is (eventually (zk/exists c "/writer/root/a/b/c/d")))
-      (is (eventually (= "sync faster!" (zd/to-string (:data (zk/data c "/writer/root/a/b/c/d")))))))))
-
-(deftest running-test
-  (let [syncer (start-sync)]
-    (is (eventually (running? syncer)))
-    (stop syncer)
-    (is (not (running? syncer)))))
+      (zk/set-data c "/root/a/b/c/d" (zd/to-bytes "sync faster!") -1)
+      (is (eventually (= "sync faster!" (zd/to-string (or (:data (zk/data c "/writer/root/a/b/c/d")) (.getBytes "")))))))))

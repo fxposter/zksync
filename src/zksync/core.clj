@@ -1,113 +1,153 @@
 (ns zksync.core
-  (:require [zookeeper :as zk]
-            [zookeeper.internal :as zi]
-            [clojure.set :as set])
-  (:import [org.apache.zookeeper ZooKeeper]))
+  (:require [clojure.set :as set])
+  (:import [java.util.concurrent LinkedBlockingQueue]
+           [org.apache.curator.framework.recipes.cache TreeCache TreeCacheListener]
+           [org.apache.curator.framework CuratorFrameworkFactory CuratorFramework]
+           [org.apache.curator.retry ExponentialBackoffRetry RetryNTimes]
+           [org.apache.zookeeper KeeperException$NodeExistsException KeeperException$NoNodeException]
+           (java.util Map Collections)
+           (org.apache.curator.framework.api UnhandledErrorListener BackgroundCallback)))
 
-(defn- fix-children [children]
-  (or children nil))
+(defn- add-listener [^TreeCache tree-cache f]
+  (.addListener
+    (.getListenable tree-cache)
+    (reify TreeCacheListener
+      (childEvent [this client event]
+        (let [e (let [data (.getData event)]
+                  (if data
+                    {:type (keyword (str (.getType event)))
+                     :path (.getPath (.getData event))
+                     :data (.getData (.getData event))}
+                    {:type (keyword (str (.getType event)))}))]
+          (f e))))))
 
-(defprotocol ZooKeeperWriterProtocol
-  (ensure-exists [_ path])
-  (ensure-not-exists [_ path])
-  (ensure-data [_ path data])
-  (ensure-children [_ path children]))
+(defn- children-for [^TreeCache tc path]
+  (try
+    (set (.keySet (or (.getCurrentChildren tc path) (Collections/emptyMap))))
+    (catch KeeperException$NoNodeException e
+      #{})))
 
-(defrecord ZooKeeperWriter [client]
-  ZooKeeperWriterProtocol
-  (ensure-exists [_ path]
-    (zk/create-all client path :persistent? true))
-  (ensure-not-exists [_ path]
-    (zk/delete-all client path))
-  (ensure-data [_ path data]
-    (zk/set-data client path data -1))
-  (ensure-children [_ path children]
-    (let [existing-children (fix-children (zk/children client path))
-          children-to-create (set/difference (set children) (set existing-children))
-          children-to-delete (set/difference (set existing-children) (set children))]
-      (doseq [child children-to-create]
-        (zk/create client (str (if (= "/" path) "" path) "/" child) :persistent? true))
-      (doseq [child children-to-delete]
-        (zk/delete-all client (str (if (= "/" path) "" path) "/" child))))))
+(defn- children-commands [tc path]
+  (let [children (children-for tc path)]
+    (concat [[:children path children
+              (mapcat #(children-commands tc (str path "/" %)) children)]])))
 
-(defprotocol ZooKeeperSyncerProtocol
-  (exists [_ path args])
-  (children [_ path args])
-  (data [_ path args]))
+(def ^:private zkset-background-callback
+  (reify BackgroundCallback
+    (processResult [_ client event])))
+      ;(prn event))))
 
-(defrecord ZooKeeperSyncer [c writer]
-  ZooKeeperSyncerProtocol
-  (exists [_ path args]
-    (let [exists (apply zk/exists c path args)]
-      (if exists
-        (ensure-exists writer path)
-        (ensure-not-exists writer path))
-      exists))
-  (children [_ path args]
-    (let [children (fix-children (apply zk/children c path args))]
-      (ensure-children writer path children)
-      children))
-  (data [_ path args]
-    (let [data (apply zk/data c path args)]
-      (ensure-data writer path (:data data))
-      data)))
+(defn- zkset [^CuratorFramework client path value]
+  (.forPath (.inBackground (.setData client) ^BackgroundCallback zkset-background-callback) path value))
 
-(declare watch)
+(def ^:private zkcreate-background-callback
+  (reify BackgroundCallback
+    (processResult [_ client event]
+      ;(prn event)
+      (when (= -110 (.getResultCode event))
+        (zkset client (.getPath event) (.getContext event))))))
 
-(defn- children-watcher [s]
-  (fn [e]
-    (when (= :NodeChildrenChanged (:event-type e))
-      (let [fetched-children (children s (:path e) [:watcher (children-watcher s)])]
-        (doseq [child fetched-children]
-          (watch s (str (if (= "/" (:path e)) "" (:path e)) "/" child)))))))
+(defn- zkcreate [^CuratorFramework client path value]
+  (.forPath (.inBackground (.creatingParentsIfNeeded (.create client)) ^BackgroundCallback zkcreate-background-callback value) path value))
 
-(defn- data-watcher [s]
-  (fn [e]
-    (when (= :NodeDataChanged (:event-type e))
-      (data s (:path e) [:watcher (data-watcher s)]))))
+(defn- zkdelete [^CuratorFramework client path]
+  (.forPath (.inBackground (.deletingChildrenIfNeeded (.delete client)) ^BackgroundCallback zkset-background-callback) path))
 
-(defn- exists-watcher [s]
-  (fn [e]
-    (when (#{:NodeCreated :NodeDeleted} (:event-type e))
-      (exists s (:path e) [:watcher (exists-watcher s)])
-      (when (= :NodeCreated (:event-type e))
-        (let [fetched-children (children s (:path e) [:watcher (children-watcher s)])]
-          (doseq [child fetched-children]
-            (watch s (str (if (= "/" (:path e)) "" (:path e)) "/" child))))
-        (data s (:path e) [:watcher (data-watcher s)])))))
+(def ^:private zkchildren-background-callback
+  (reify BackgroundCallback
+    (processResult [_ client event]
+      ;(prn event)
+      (when (not= -101 (.getResultCode event))
+        (let [existing-children (set (.getChildren event))
+              children (.getContext event)
+              children-to-delete (set/difference existing-children children)]
+          (doseq [child children-to-delete]
+            (zkdelete client (str (.getPath event) "/" child))))))))
 
-(defn- watch
-  ([s path]
-   (watch s path false))
-  ([s path root]
-   (when (exists s path (if root [:watcher (exists-watcher s)] []))
-     (when-let [children (children s path [:watcher (children-watcher s)])]
-       (doseq [child children]
-         (watch s (str (if (= "/" path) "" path) "/" child))))
-     (data s path [:watcher (data-watcher s)]))))
+(defn zkchildren [^CuratorFramework client path value]
+  (.forPath (.inBackground (.getChildren client) ^BackgroundCallback zkchildren-background-callback value) path))
 
-(defn start [source destination paths]
-  (let [source-box (volatile! nil)
-        destination-box (volatile! nil)]
-    (letfn [(watcher [e]
-              (when (= (:keeper-state e) :Disconnected)
-                (if-let [source-conn @source-box] (zk/close source-conn))
-                (if-let [destination-conn @destination-box] (zk/close destination-conn))
-                (do-sync)))
-            (do-sync []
-              (let [source-conn (vreset! source-box (ZooKeeper. source 5000 (zi/make-watcher watcher) true))
-                    destination-conn (vreset! destination-box (ZooKeeper. destination 5000 (zi/make-watcher watcher)))
-                    writer (ZooKeeperWriter. destination-conn)
-                    syncer (ZooKeeperSyncer. source-conn writer)]
-                (future
-                  (doseq [path paths]
-                    (watch syncer path true)))))]
-      (do-sync)
-      [source-box destination-box])))
+(defn no-retry []
+  (RetryNTimes. 0 0))
 
-(defn stop [syncer]
-  (doseq [box syncer]
-    (if-let [conn @box] (zk/close conn))))
+(defn exponential-backoff-retry [sleep-time retries]
+  (ExponentialBackoffRetry. sleep-time retries))
 
-(defn running? [syncer]
-  (every? #(= :CONNECTED (if-let [conn @%] (zk/state conn))) syncer))
+(defn curator-framework [connect-string retry-policy & {:keys [namespace]}]
+  (let [builder (CuratorFrameworkFactory/builder)]
+    (.connectString builder connect-string)
+    (.retryPolicy builder retry-policy)
+    (.namespace builder namespace)
+    (.build builder)))
+
+(defn start-source [client path queues]
+  (let [tree-cache (.build (TreeCache/newBuilder client path))]
+    (add-listener tree-cache (fn [e]
+                               (case (:type e)
+                                 :NODE_ADDED (doseq [^LinkedBlockingQueue queue queues]
+                                               (.put queue [:add (:path e) (:data e)]))
+                                 :NODE_REMOVED (doseq [^LinkedBlockingQueue queue queues]
+                                                 (.put queue [:remove (:path e)]))
+                                 :NODE_UPDATED (doseq [^LinkedBlockingQueue queue queues]
+                                                 (.put queue [:data (:path e) (:data e)]))
+                                 :INITIALIZED (doseq [command (children-commands tree-cache path)]
+                                                (doseq [^LinkedBlockingQueue queue queues]
+                                                  (.put queue command)))
+                                 nil)))
+    (.start tree-cache)
+    tree-cache))
+
+(defn sources [client paths queues]
+  (mapv #(start-source client % queues) paths))
+
+(defn- sink-worker [client ^LinkedBlockingQueue queue]
+  (let [[command path value] (.take queue)]
+    (let [action (case command
+                   :add (zkcreate client path value)
+                   :remove (zkdelete client path)
+                   :data (zkset client path value)
+                   :children (zkchildren client path value)
+                   ::stop ::stop
+                   nil)]
+      (when (not= action ::stop)
+        (recur client queue)))))
+
+(defn start-sink [client queue]
+  (let [th (Thread. #(sink-worker client queue))]
+    (.start th)
+    th))
+
+(defn create [source-client paths sink-clients]
+  (let [sinks-and-queues (mapv (fn [c] [c (LinkedBlockingQueue.)]) sink-clients)
+        sink-threads (mapv (fn [[sink queue]] (start-sink sink queue)) sinks-and-queues)
+        sink-queues (mapv (fn [[sink queue]] queue) sinks-and-queues)
+        source-tree-caches (sources source-client paths sink-queues)]
+    {:source-client      source-client
+     :source-tree-caches source-tree-caches
+     :sink-clients       sink-clients
+     :sink-queues        sink-queues
+     :sink-threads       sink-threads}))
+
+(defn start [sync]
+  (.start ^CuratorFramework (:source-client sync))
+  (doseq [^CuratorFramework client (:sink-clients sync)]
+    (.start client))
+  sync)
+
+(defn stop [sync]
+  (doseq [^TreeCache client (:source-tree-caches sync)]
+    (.close client))
+  (.close ^CuratorFramework (:source-client sync))
+  (doseq [^CuratorFramework client (:sink-clients sync)]
+    (.close client))
+  (doseq [^LinkedBlockingQueue queue (:sink-queues sync)]
+    (.clear queue)
+    (.put queue [::stop]))
+  (doseq [^Thread thread (:sink-threads sync)]
+    (.join thread))
+  sync)
+
+
+;(def sync (create (curator-framework "127.0.0.1:2181" (no-retry)) ["/root"] [(curator-framework "127.0.0.1:2181" (no-retry) :namespace "writer")]))
+;(start sync)
+;(stop sync)
