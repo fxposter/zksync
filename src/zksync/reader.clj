@@ -9,10 +9,10 @@
          children-commands)
 
 (defprotocol Listener
-  (set-value [_ path value])
-  (create [_ path value])
-  (delete [_ path])
-  (keep-children [_ path children]))
+  (updated [_ path value])
+  (created [_ path value])
+  (deleted [_ path])
+  (children-updated [_ path children]))
 
 (defn add-listeners [client path listeners]
   (let [tree-cache (.build (TreeCache/newBuilder client path))]
@@ -20,14 +20,14 @@
                        (fn [e]
                          (case (:type e)
                            :NODE_ADDED (doseq [listener listeners]
-                                         (create listener (:path e) (:data e)))
+                                         (created listener (:path e) (:data e)))
                            :NODE_REMOVED (doseq [listener listeners]
-                                           (delete listener (:path e)))
+                                           (deleted listener (:path e)))
                            :NODE_UPDATED (doseq [listener listeners]
-                                           (set-value listener (:path e) (:data e)))
+                                           (updated listener (:path e) (:data e)))
                            :INITIALIZED (doseq [[path children] (children-commands tree-cache path)]
                                           (doseq [listener listeners]
-                                            (keep-children listener path children)))
+                                            (children-updated listener path children)))
                            nil)))
     tree-cache))
 
