@@ -54,10 +54,7 @@
         (f e)))))
 
 (defn- children-for [^TreeCache tc path]
-  (try
-    (set (.keySet (or (.getCurrentChildren tc path) (Collections/emptyMap))))
-    (catch KeeperException$NoNodeException e
-      #{})))
+  (set (.keySet (or (.getCurrentChildren tc path) (Collections/emptyMap)))))
 
 (defn- children-commands [tc path]
   (let [children (children-for tc path)]

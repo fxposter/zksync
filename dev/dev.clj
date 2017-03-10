@@ -4,6 +4,7 @@
   (:require
     [clojure.tools.namespace.repl :refer [refresh refresh-all]]
     [zksync.core :refer :all]
+    [zksync.curator :refer [curator-framework no-retry exponential-backoff-retry]]
     [clojure.test :refer [run-tests]]))
 
 (set! *warn-on-reflection* true)
