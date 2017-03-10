@@ -1,6 +1,7 @@
 (ns zksync.core-test
   (:require [clojure.test :refer :all]
             [zksync.core :refer :all]
+            [zksync.curator :refer [curator-framework no-retry]]
             [zookeeper :as zk]
             [zookeeper.data :as zd]
             [zookeeper.internal :as zi]
