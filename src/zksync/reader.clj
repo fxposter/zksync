@@ -4,13 +4,13 @@
 
 (declare convert-listener
          add-tree-listener
-         update-structure)
+         initialize)
 
 (defprotocol Listener
   (updated [_ path value])
   (created [_ path value])
   (deleted [_ path])
-  (children-updated [_ path children]))
+  (initialized [_ path f]))
 
 (defn add-listeners [client path listeners]
   (let [tree-cache (.build (TreeCache/newBuilder client path))]
@@ -23,7 +23,7 @@
                                            (deleted listener (:path e)))
                            :NODE_UPDATED (doseq [listener listeners]
                                            (updated listener (:path e) (:data e)))
-                           :INITIALIZED (update-structure tree-cache path listeners)
+                           :INITIALIZED (initialize tree-cache path listeners)
                            nil)))
     tree-cache))
 
@@ -49,9 +49,17 @@
                   {:type (keyword (str (.getType event)))}))]
         (f e)))))
 
-(defn- update-structure [^TreeCache tree-cache path listeners]
+(defn- build-node [^TreeCache tree-cache path]
+  (let [data (.getCurrentData tree-cache path)
+        children (.getCurrentChildren tree-cache path)]
+    (if (and data children)
+      {:value (.getData data)
+       :children (.keySet children)}
+      nil)))
+
+(defn- initialize [^TreeCache tree-cache path listeners]
   (let [children (.keySet (or (.getCurrentChildren tree-cache path) (Collections/emptyMap)))]
     (doseq [listener listeners]
-      (children-updated listener path children))
+      (initialized listener path #(build-node tree-cache path)))
     (doseq [child children]
-      (update-structure tree-cache (str path "/" child) listeners))))
+      (initialize tree-cache (str path "/" child) listeners))))
