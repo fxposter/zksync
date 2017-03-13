@@ -54,7 +54,7 @@
         (f e)))))
 
 (defn- children-for [^TreeCache tc path]
-  (set (.keySet (or (.getCurrentChildren tc path) (Collections/emptyMap)))))
+  (.keySet (or (.getCurrentChildren tc path) (Collections/emptyMap))))
 
 (defn- children-commands [tc path]
   (let [children (children-for tc path)]
