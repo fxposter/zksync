@@ -10,10 +10,12 @@
   (updated [_ path value])
   (created [_ path value])
   (deleted [_ path])
-  (initialized [_ path f]))
+  (initialized [_ path f])
+  (request-reinitialization-fn [_ path fn]))
 
 (defn add-listeners [client path listeners]
-  (let [tree-cache (.build (TreeCache/newBuilder client path))]
+  (let [tree-cache (.build (TreeCache/newBuilder client path))
+        was-initialized (volatile! false)]
     (add-tree-listener tree-cache
                        (fn [e]
                          (case (:type e)
@@ -23,7 +25,13 @@
                                            (deleted listener (:path e)))
                            :NODE_UPDATED (doseq [listener listeners]
                                            (updated listener (:path e) (:data e)))
-                           :INITIALIZED (initialize tree-cache path listeners)
+                           :INITIALIZED (do
+                                          (initialize tree-cache path listeners)
+                                          (if-not @was-initialized
+                                            (doseq [listener listeners]
+                                              (request-reinitialization-fn listener path
+                                                                           #(initialize tree-cache path [listener]))))
+                                          (vreset! was-initialized true))
                            nil)))
     tree-cache))
 
@@ -53,7 +61,7 @@
   (let [data (.getCurrentData tree-cache path)
         children (.getCurrentChildren tree-cache path)]
     (if (and data children)
-      {:value (.getData data)
+      {:value    (.getData data)
        :children (.keySet children)}
       nil)))
 

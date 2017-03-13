@@ -3,14 +3,15 @@
             [zksync.reader :as r]
             [clojure.tools.logging :as log])
   (:import (org.apache.curator.framework.api BackgroundCallback CuratorEvent PathAndBytesable Pathable)
-           (org.apache.curator.framework CuratorFramework)))
+           (org.apache.curator.framework CuratorFramework)
+           (org.apache.curator.framework.state ConnectionStateListener ConnectionState)))
 
 (declare ^BackgroundCallback default-callback
          ^BackgroundCallback created-callback
          ^BackgroundCallback initialized-callback
          log-event)
 
-(defrecord ZooKeeper [^CuratorFramework client]
+(deftype ZooKeeper [^CuratorFramework client]
   r/Listener
   (updated [_ path value]
     (.forPath ^PathAndBytesable (.inBackground (.setData client) default-callback) path value))
@@ -19,7 +20,15 @@
   (deleted [_ path]
     (.forPath ^Pathable (.inBackground (.deletingChildrenIfNeeded (.delete client)) default-callback) path))
   (initialized [this path f]
-    (.forPath ^Pathable (.inBackground (.getChildren client) initialized-callback {:client this, :fn f}) path)))
+    (.forPath ^Pathable (.inBackground (.getChildren client) initialized-callback {:client this, :fn f}) path))
+  (request-reinitialization-fn [_ path f]
+    (.addListener
+      (.getConnectionStateListenable client)
+      (reify ConnectionStateListener
+        (stateChanged [_ _ newState]
+          (if (.isConnected newState)
+            (f)))))))
+
 
 (def ^:private ^BackgroundCallback default-callback
   (reify BackgroundCallback
