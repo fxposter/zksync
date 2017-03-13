@@ -38,14 +38,21 @@
   (reify BackgroundCallback
     (processResult [_ _client event]
       (log-event event :success-result-codes #{0 -101})
-      (when (not= -101 (.getResultCode event))
-        (let [existing-children (set (.getChildren event))
-              context (.getContext event)
-              children (:children (or ((:fn context)) {:children #{}}))
-              client (:client context)
-              children-to-delete (set/difference existing-children children)]
-          (doseq [child children-to-delete]
-            (r/deleted client (str (.getPath event) "/" child))))))))
+
+      (let [context (.getContext event)
+            node ((:fn context))
+            client (:client context)]
+        (if node
+          (if (not= -101 (.getResultCode event))
+            (let [value (:value node)
+                  children (:children node)
+                  existing-children (set (.getChildren event))
+                  children-to-delete (set/difference existing-children children)]
+              (r/updated client (.getPath event) value)
+              (doseq [child children-to-delete]
+                (r/deleted client (str (.getPath event) "/" child))))
+            (r/created client (.getPath event) (:value node)))
+          (r/deleted client (.getPath event)))))))
 
 (defn- log-event [^CuratorEvent event & {:keys [success-result-codes]
                                          :or   {success-result-codes #{0}}}]

@@ -12,9 +12,9 @@
      :writer-clients writer-clients}))
 
 (defn start [sync]
-  (curator/start (:reader-client sync))
   (doseq [client (:writer-clients sync)]
     (curator/start client))
+  (curator/start (:reader-client sync))
   (doseq [listener (:listeners sync)]
     (r/start-listener listener))
   sync)
