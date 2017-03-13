@@ -2,7 +2,7 @@
   (:require [clojure.set :as set]
             [zksync.reader :as r]
             [clojure.tools.logging :as log])
-  (:import (org.apache.curator.framework.api BackgroundCallback CuratorEvent)
+  (:import (org.apache.curator.framework.api BackgroundCallback CuratorEvent PathAndBytesable Pathable)
            (org.apache.curator.framework CuratorFramework)))
 
 (declare ^BackgroundCallback default-callback
@@ -13,13 +13,13 @@
 (defrecord ZooKeeper [^CuratorFramework client]
   r/Listener
   (updated [_ path value]
-    (.forPath (.inBackground (.setData client) default-callback) path value))
+    (.forPath ^PathAndBytesable (.inBackground (.setData client) default-callback) path value))
   (created [this path value]
-    (.forPath (.inBackground (.creatingParentsIfNeeded (.create client)) created-callback {:client this, :value value}) path value))
+    (.forPath ^PathAndBytesable (.inBackground (.creatingParentsIfNeeded (.create client)) created-callback {:client this, :value value}) path value))
   (deleted [_ path]
-    (.forPath (.inBackground (.deletingChildrenIfNeeded (.delete client)) default-callback) path))
+    (.forPath ^Pathable (.inBackground (.deletingChildrenIfNeeded (.delete client)) default-callback) path))
   (children-updated [this path children]
-    (.forPath (.inBackground (.getChildren client) children-updated-callback {:client this, :children children}) path)))
+    (.forPath ^Pathable (.inBackground (.getChildren client) children-updated-callback {:client this, :children children}) path)))
 
 (def ^:private ^BackgroundCallback default-callback
   (reify BackgroundCallback

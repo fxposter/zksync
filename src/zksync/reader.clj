@@ -1,12 +1,10 @@
 (ns zksync.reader
-  (:import (org.apache.curator.framework CuratorFramework)
-           (org.apache.curator.framework.recipes.cache TreeCacheListener TreeCache)
-           (java.util Collections)
-           (org.apache.zookeeper KeeperException$NoNodeException)))
+  (:import (org.apache.curator.framework.recipes.cache TreeCacheListener TreeCache)
+           (java.util Collections)))
 
 (declare convert-listener
          add-tree-listener
-         children-commands)
+         update-structure)
 
 (defprotocol Listener
   (updated [_ path value])
@@ -25,9 +23,7 @@
                                            (deleted listener (:path e)))
                            :NODE_UPDATED (doseq [listener listeners]
                                            (updated listener (:path e) (:data e)))
-                           :INITIALIZED (doseq [[path children] (children-commands tree-cache path)]
-                                          (doseq [listener listeners]
-                                            (children-updated listener path children)))
+                           :INITIALIZED (update-structure tree-cache path listeners)
                            nil)))
     tree-cache))
 
@@ -53,10 +49,9 @@
                   {:type (keyword (str (.getType event)))}))]
         (f e)))))
 
-(defn- children-for [^TreeCache tc path]
-  (.keySet (or (.getCurrentChildren tc path) (Collections/emptyMap))))
-
-(defn- children-commands [tc path]
-  (let [children (children-for tc path)]
-    (concat [[path children]]
-            (mapcat #(children-commands tc (str path "/" %)) children))))
+(defn- update-structure [^TreeCache tree-cache path listeners]
+  (let [children (.keySet (or (.getCurrentChildren tree-cache path) (Collections/emptyMap)))]
+    (doseq [listener listeners]
+      (children-updated listener path children))
+    (doseq [child children]
+      (update-structure tree-cache (str path "/" child) listeners))))
