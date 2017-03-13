@@ -97,6 +97,13 @@
     (fn [c]
       (is (eventually (zk/exists c "/writer/root/hello/world"))))))
 
+(deftest deleting-initial-structure
+  (run-sync
+    (fn [c]
+      (zk/create-all c "/writer/root/hello/world" :persistent? true))
+    (fn [c]
+      (is (eventually (not (zk/exists c "/writer/root/hello/world")))))))
+
 (deftest updating-structure
   (run-sync
     (fn [c]
