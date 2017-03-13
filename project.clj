@@ -1,4 +1,4 @@
-(defproject zksync "0.1.0"
+(defproject zksync "0.2.0"
   :description "Syncing zookeeper subtrees between multiple clusters"
   :url "https://github.com/fxposter/zksync"
   :license {:name "Eclipse Public License"
